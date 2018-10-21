@@ -1,45 +1,67 @@
 ---
-title: "Comparing Machine Learning Models for Insurance Ratemaking"
+title: "Comparing Machine Learning Models for Insurance Ratemaking - Rough Draft  "
 author: "Sam Castillo"
 date: "`r format(Sys.time(), '%d %B %Y')`"
 output:
   pdf_document:
     toc: yes
   html_document:
-    theme: united
+    theme: cerulean
     toc: yes
 email: castillo.sam.d@gmail.com
 ---
 
-# DRAFT
-
 ```{r global options, include = FALSE}
 knitr::opts_chunk$set( warning=FALSE, message=FALSE)
-library(tidyverse) #data manipulations
-library(broom) #tidy model summarization
-library(knitr) #document formatting
-library(caret) #modeling
-library(DT) #pretty data tables
-library(Hmisc) #modeling
-library(GGally) #plotting
-library(ggExtra) #more plots
-library(gbm) #gradient boosted trees
-library(Amelia) #dealing with missing values
-library(corrplot) #correlation plot
-library(forcats) #manage factor levels
-library(insuranceData) #data source
+#document format
+library(knitr) 
+library(DT) 
+#graphics
+library(GGally) 
+library(grid) 
+library(ggpubr) 
+library(ggExtra) 
+#modeling
+library(fitdistrplus) 
+library(Hmisc)
+library(caret) 
+library(gbm) 
+library(Amelia)
+#general
+library(tidyverse)
+library(broom)
+library(forcats)
+library(insuranceData) 
 ```
 
 #Introduction
 
-Today I walked to a nearby Cafe Nero in Boston to use their wifi while writing this.  I ordered a small english breakfast tea with no sugar.  This delicious hot beverage had a price of \$2.49.  Why was it \$2.49?  Why not \$249.00?  Why not \$5.00 or \$10.00?  Is it because \$2.49 is the cost of a cup of tea anywhere else in Boston?  Is there a Massachusetts law which sets limits on prices for breakfast beverages?  Is it because the demand and supply curves tell it to be \$2.49?
+A few months ago, I sat on the first conference call with 43 other actuaries from around the U.S. to talk about how machine learning is changing the actuarial industry. The Casualty Actuarial Society (CAS) had formed a working party to research this area, and the turnout has been bigger than anyone has expected. We have since divided into two sub-groups to focus on 1) producing a worked-example of using ML, which is where I am, and 2) researching how to encorporate ML while following regulatory limitations.
 
-Regardless of how the price is determined, the product purchased is the same cup of tea.  If I were to buy 100 cups of tea, they would all taste the same and cost Cafe Nero the same amount in order to produce.  This is to say, the cost of a cup of tea from the perspective of the seller is constant.
+The purpose of this paper is to gain practical experience creating models for auto insurance claims.
 
-If Cafe Nero was selling me an insurance product, then this would be a different story.  Let's say that Cafe Nero sold me auto insurance for the next 12-months for \$2.49.  Would this be a fair price?  This would depend on a number of factors such as my driving record, the value of my car, and the number of miles that I drive.  The goal of ratemaking in insurance is to set premiums which are not too high and not to low.  **My goal is to compare the traditional method for pricing claims using Generalized Linear Models (GLMs) with newer machine learning approaches while following papers published by the Casualty Actuarial Society (See Sources section).**
+##How is pricing insurance different than pricing anything else?
+
+Right in front of me is a small English Breakfast cup of tea from Cafe Nero.  This delicious hot beverage had a price of \$2.49.  Why was it \$2.49?  Why not \$249.00?  Why not \$5.00 or \$10.00?  The price is \$2.49 because Cafe Nero knows exactly how much it costs them to create the tea, how much they pay their hourly employees to serve the tea, the cost of rent to keep the store open, and they know that the average person is willing to pay this price.  At \$2.49, they believe that their profitability is highest.  The price is set based on known, fixed quantities.  
+
+In pricing a cup of tea, profit is a function of fixed quantities
+
+$$\text{Profit per Cup of Tea} = \text{Price Customer Pays} - \text{Cost to Cafe Nero }$$
+
+If Cafe Nero was selling me insurance instead of a cup of tea, then finding the right price would be a different exercise.  Let's say that Cafe Nero sold me auto insurance for the next 12-months for \$249 per month.  Would they make profit off of this policy?  This would depend on whether I was involved in an accident that year.  In years where I was not involed in accidents, they would be profitable, but if I happened to get into an accident that cost more than the annual premium, then they would lose money.
+
+Their profit equation would involve *random variables* instead of fixed amounts.  That is, on years where the claims are higher than the premiums, they are not profitable.
+
+$$\text{Profit per Policy} = \text{Premium} - \text{Claims}$$
+
+Now imagine that Cafe Nero has crystal ball which could predict the future and tell whether or not I would be in an accident and exactly how much this could cost them in claims.  Then they could just set their premium to be larger than this by any amount that they choose.  For instance, let's say that they want to make \$50 per policy month.  Then they would just set their premium to be \$50 higher than the predicted future claims.
+
+$$\text{Profit per Policy} = \text{50} + \text{Predicted Claims} - \text{Annual Claims} = \text{50}$$
+
+This would only be true so long as $\text{Predicted Claims}$ is a good predictiion!  If the predictions were bad, then the profitability would be unstable.  One of the main goals of pricing insurance is to predict future claims, and this requires building models which can determine the risk of selling coverage to policyholders.  
 
 
-##Insurance Terms:
+##Key Definitions
 
 * **Exposure:** A  measure of the amount of risk hazard.  This is usually the length of coverage term.  This can also be the number of miles driven.  
 
@@ -68,6 +90,7 @@ Because `frequency` is assumed to be independent of `severity`, the expected val
 
 This data set is based on one-year vehicle insurance policies taken out in 2004 or 2005. There are 67,856 policies.  Each record represents a single policyholder, over a set coverage period, for a given vehicle, along with other policy-level characteristics.  Anyone can access this data from the R package `insuranceData`.
 
+
 | Feature | Description | 
 |---|---|
 | veh_value | The value of the vehicle in \$10,000s |
@@ -80,49 +103,52 @@ This data set is based on one-year vehicle insurance policies taken out in 2004 
 |   gender| Gender of policyholder  | 
 |   area| Geographic region | 
 |   agecat| 1 (youngest), 2, 3, 4, 5, 6  | 
-|   X_OBSTAT_|  No description provided | 
 
-We look at the distributions and see that `veh_value` and `claimcst0` are heavily right-skewed.  The `exposure` of policyholders is approximately uniform, which is what we would expect.
+
+##Histograms
+
 
 ```{r fig.height=3}
 data(dataCar)
+my_theme <- scale_color_brewer(palette="PuPuGn") 
 
 car <- dataCar %>% 
   mutate_at(c("clm", "agecat", "X_OBSTAT_", "veh_body"), as.factor) %>% 
   #because ther are only a few roadsters, these are being grouped together as sports cars
   mutate(veh_body = as.character(veh_body),
-         veh_body =  as.factor(ifelse(veh_body %in% c("RDSTR", "CONVT"), yes = "SPRT", no = veh_body))) 
+         veh_body =  as.factor(ifelse(veh_body %in% c("RDSTR", "CONVT"), 
+                                      yes = "SPRT", no = veh_body))) 
 
 p1 <- car %>% 
   ggplot(aes(veh_value)) + 
-  geom_histogram() + 
+  geom_histogram(fill = 'deepskyblue4') + 
   xlim(0, 10) + 
   ggtitle("Vehicle Value")  +
-  theme_light()
+  theme(axis.title.y=element_blank()) 
 
 p2 <- car %>% 
   ggplot(aes(exposure)) + 
-  geom_histogram() + 
-  ggtitle("Exposure: Length of Coverage Term") +
-  theme_light()
+  geom_histogram(fill = 'deepskyblue4') + 
+  ggtitle("Exposure: Length \nof Coverage Term") +
+  theme(axis.title.y=element_blank()) 
 
 p3 <- car %>% 
   dplyr::filter(claimcst0 > 0) %>% 
   ggplot(aes(claimcst0)) + 
-  geom_histogram() +
+  geom_histogram(fill = 'deepskyblue4') +
   ggtitle("Non-zero severity") +
-  theme_light()
+  theme(axis.title.y=element_blank()) 
 
-grid.arrange(p1, p2, p3, ncol = 3)
-
+ggarrange(p1, p2, p3, ncol = 3)
 ```
 
-The data is being split into two data sets: once for modeling the frequency with all claims included, and another for modeling the severity where zero-pay claims are dropped.  
+The histograms above show the shapes of the distributions.  `veh_value` (left) is skewed right, as vehicles become less common as they become more expensive.  The length of the exopsure period for the policy, `exposure` (center), is almost uniform which indicates that we have about the same number of 1-year policies as shorter term policies.  The cost of the claims, `claimcst0` (right), is also highly right-skewed and inflated at zero because most policies do not experience an accident in any given year.
 
-We see that the most severe accidents are for family vehicles and daily drivers, such as trucks, sedans, and hatchbacks.  The laest severe claims are for weekend cars such as sports cars, hard tops, and busses.  These are vehicles that do not get driven as often.
+##Possible Feature Interactions
 
+A feature interaction, or an "interaction effect" is when the level of one variable impacts the impact that another variable has on the outcome.  In this example, we find that impact of a vehicle's value on the cost of claims changes depending on the vehicle type.  The jargon for this is that there is an interaction effect between `veh_value` and `veh_body`.  We look at graphs to see if there are any interactions.
 
-```{r fig.height=5, fig.width=5}
+```{r fig.height=4, fig.width=8}
 severity_order <- car %>% 
   group_by(veh_body) %>% 
   filter(claimcst0 > 0 ) %>% 
@@ -132,55 +158,40 @@ severity_order <- car %>%
   unlist() %>% 
   as.character()
 
-car %>% 
+severity_plot <- car %>% 
   group_by(veh_body) %>% 
   filter(claimcst0 > 0 ) %>% 
-  summarise(claimcst0 = mean(claimcst0/exposure, na.rm = T),
-            veh_value = mean(veh_value, na.rm = T)) %>% 
-  ggplot(aes(y = claimcst0, x = veh_body, fill = veh_value)) + 
-  geom_bar(stat = "identity") + 
+  summarise(claimcst0 = mean(claimcst0/exposure, na.rm = T)) %>% 
+  ggplot(aes(y = claimcst0, x = veh_body)) + 
+  geom_bar(stat = "identity", fill = "deepskyblue2") + 
   coord_flip() + 
-  ggtitle("Average Severity for Non-Zero Claims by Vehicle Body Type") + 
   scale_x_discrete(limits = severity_order) + 
-  theme_light()
-```
+  theme(axis.title.y=element_blank()) + 
+  ylab("Average claim cost per unit exposure \n excluding no-pay claims") + 
+  ggtitle("Severity")
 
-When looking at the average frequency of accidents, we see that busses have an highest frequency of accidents but the 2nd lowest severity.  Although trucks have a high average severity, they are in accidents about the same number of times per exposure period as smaller passenger cars.  Hard tops (a type of sports car) have lower severity but greater frequency than SUV's.  
-
-
-```{r fig.height=5, fig.width=5}
-car %>% 
+frequency_plot <- car %>% 
   group_by(veh_body) %>% 
-  summarise(mean_frequency = sum(numclaims/exposure, na.rm = T)/n(),
-            veh_value = mean(veh_value, na.rm = T)) %>% 
-  ggplot(aes(y = mean_frequency, x = veh_body, fill = veh_value)) + 
-  geom_bar(stat = "identity") + 
+  summarise(mean_frequency = sum(numclaims/exposure, na.rm = T)/n()) %>% 
+  ggplot(aes(y = mean_frequency, x = veh_body)) + 
+  geom_bar(stat = "identity", fill = "deepskyblue4") + 
   coord_flip() + 
-  ggtitle("Average Frequency for Non-Zero Claims by Vehicle Body Type")+
   scale_x_discrete(limits = severity_order) +
-  theme_light()
-
+  scale_y_reverse() + 
+  theme(axis.title.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank()) +
+  ylab("Average Frequency per unit \n exposure including all policies") + 
+  ggtitle("Frequency")
+  
+ggarrange(frequency_plot, severity_plot, ncol = 2, common.legend = T, legend = "bottom")
 ```
 
-
-The most severe accidents total the car because there are no subsequent claims.  What happens when the claim cost is greater than the vehicle's value?  When a vehicle is totaled, the policy can have no additional claims.  This means that the majority of the large losses will occur with only one claim on the policy. 
-
-```{r}
-car %>% 
-  filter(claimcst0 > 0, veh_value > 0) %>% 
-  mutate(totaled = ifelse(claimcst0 > veh_value*10000, "totaled", "not_totaled")) %>% 
-  ggplot(aes(veh_value, claimcst0, color = totaled)) + 
-  geom_point() + 
-  xlim(0, 5) + 
-  geom_abline(slope = 10000, intercept = 0) + 
-  ggtitle("Vehicles are totaled when the claim amount is greater than the value") + 
-  scale_fill_manual(values=c( "deepskyblue3", "dodgerblue4")) +
-  theme_light()
-```
+We compare not only the number of reported claims but also the dollar amount of each claim.  Trucks have a high severity as well as a high frequency, indicating that these are the most expensive vehicle type to insure.  Sedans also have a high severity and frequency.  Bussesand and Coupes have a high frequency but low severity, indicating that they are in accidents often but do not report high damage.  Sports cars
 
 We can see than men spend \$77 dollars on trucks for every \$22 dollars that women on trucks.  Men tend to drive sport unitilty vehicles, trucks, and `PANV`'s, and women tend to drive hatchbacks, sedans, and minivans (`MIBUS`'s).
 
-```{r}
+```{r include = T, eval = T}
 car %>% 
   mutate(gender = ifelse(gender == "F", "women", "men")) %>% 
   group_by(gender, veh_body) %>% 
@@ -227,7 +238,7 @@ car %>%
   geom_histogram() + 
   ggtitle("Many Claims are exactly $200 or $345 due to Insurance Deductibles") + 
   xlab("Log of Severity") +
-  scale_fill_manual(values=c( "deepskyblue3", "dodgerblue4")) +
+  scale_fill_manual(values=c( "deepskyblue2", "deepskyblue4")) +
   theme_light()
 ```
 
@@ -248,73 +259,34 @@ $$P[Y = y] = P[X - d = x| X > d]$$
 This is a very common problem in insurance data, and the author cites several methods for fixing this.  The simplest approach is to use `deductible` as a new feature.  We would also remove the deductibles and fit a distribution to fill in the amounts less than the deductible, after adjusting the maximum likelihood estimate for truncation.  The most throrough approach is to remove these from the data and model them seperately. 
 
 
-##Correlation with Severity
+##Correlations
 
-We look for linear relationships between the features.  Most of these correlations are intuitive, such as 
+If two features are positively correlated, then one tends to be high then the other tends to be high and vice versa when it is low.  When a feature is inversely correlated, an high value in the first usually occurs when there is a low value in the second.  The matrix below shows how each of the numeric features are related to each other.
+
+
+```{r fig.width=5, fig.height=5, echo = F, eval = T}
+numeric_cols <- car %>% select_if(is.numeric) 
+
+corr = cov.wt(numeric_cols, wt = numeric_cols$numclaims, cor = T)$cor 
+
+corr %>% 
+  as_data_frame() %>% 
+  mutate(variable_left = rownames(corr)) %>% 
+  select(variable_left, everything()) %>% 
+  kable(digits = 3)
+
+```
+
+This is computed using the weighted Pearson correlation, where the weights are the number of claims.  The reason why this is the number of claims instead of the exposure is because we are not given individual line items for each claim.  For example, if the number of claims in a policy is 4, then the number of observations for that occurence should be four.
 
 * vehicle age is negatively correlated with value given that cars depreciate in value over time
-* As the length of coverage increases, `exposure`, there is an increase in the frequency of claims.  More on this later.
+* As the length of coverage increases, `exposure`, there is an increase in the frequency of claims. 
 * There is no correlation between the vehicle's age the the number of claims.  We would expect that the risk of an accident does not directly depend on the age of the vehicle, but here could be non-linear relationships here.  For example, vehicle's which the owner has just purchased could be at a higher risk due to the driver having less experience behind the wheel
 
 
-```{r fig.width=5, fig.height=5}
-car %>% 
-  filter(claimcst0 > 0) %>% 
-  select_if(is.numeric) %>% 
-  as.matrix() %>% 
-  na.omit() %>% 
-  cor() %>% 
-  corrplot(
-    method = "color",
-    type = "upper",
-    order="hclust", 
-    addCoef.col = "black", # Add coefficient of correlation
-    tl.col="black",
-    tl.srt=45, #Text label color and rotation
-    # Combine with significance
-    #p.mat = p.mat, 
-    sig.level = 0.01, 
-    insig = "blank", 
-    title = "Correlations in Claim Severity",
-    # hide correlation coefficient on the principal diagonal
-    diag=F)
-  
-```
-
-
-When looking the complete data, regardless of whether a claim was filed or not, there is a slightly different picture.
-
-* The length of the coverage period, `exposure`, is strongly associated with the number of claims.  This implies that a Poisson model would be appropriate fit for frequency.  
-* When the number of claims increases so does the claim cost.  This is just the way that the data is structured.  Two apples are more than one apple.
-
-```{r fig.width= 5, fig.height=5}
-car %>% 
-  select_if(is.numeric) %>% 
-  as.matrix() %>% 
-  na.omit() %>% 
-  cor() %>% 
-  corrplot(
-    method = "color",
-    type = "upper",
-    order="hclust", 
-    addCoef.col = "black", # Add coefficient of correlation
-    tl.col="black",
-    tl.srt=45, #Text label color and rotation
-    # Combine with significance
-    #p.mat = p.mat, 
-    sig.level = 0.01, 
-    insig = "blank", 
-    title = "Correlations in Claim Severity",
-    # hide correlation coefficient on the principal diagonal
-    diag=F)
-  
-```
-
 #Data Preparation
 
-The goal of this step is to put the data into the right shape for modeling.
-
-The target of the severity model is the average loss amount per claim.  We have already added indicator variables for deductibles.  The author recommends taking the log transform of any continuous features if a log-link is used (see GLM section below).
+The goal of this step is to put the data into the right shape for modeling.  The target of the severity model is the average loss amount per claim.  We have already added indicator variables for deductibles.  The author recommends taking the log transform of any continuous features if a log-link is used (see GLM section below).
 
 ```{r}
 severity <- car %>% 
@@ -326,7 +298,6 @@ severity <- car %>%
 
 Even insurance companies have limits to the amount of risk that they will insure.  They set limits to the highest claim amount that they will cover, and can then pass the amount above these claims on the reinsurance companies.  This is known as ceeding risk.  The range of claim values that are covered is known as the *coverage layer*.
 
-
 Another item which can improve the model outcomes is related to the factor levels.  This is related to how R chooses base levels (AKA, reference levels).  The author says to set these to the levels which have the largest sample sizes in order to reduce the variance of the parameters in GLMs.  Fortunately, the library `forcats` has a function designed specifically to do just this in just two lines of code!
 
 
@@ -336,7 +307,6 @@ car <- car %>%
 ```
 
 When we look at the data we see that there are several losses which are much larger than the others.  If these are left in the model as-is, they will have too much influence on the model's parameters and will result in a poorer fit.  These are being capped at the 90% quantile.
-
 
 ```{r}
 avg_loss_cap <- quantile(severity$avg_loss, 0.95)
@@ -353,7 +323,7 @@ severity %>%
 ```
 
 
-```{r}
+```{r fig.height=5}
 severity %>%
   ggplot(aes(avg_capped_losss, fill = large_loss)) + 
   geom_histogram() + 
@@ -371,8 +341,6 @@ Finally, we have enough information to build a clean data set for modeling.  Thi
 
 * Removed claims at deductible amounts.  We will also model deductible losses seperately.
 
-* Took a 50% sample of the data in order to speed up the modeling process. This is only because my laptop is weak.
-
 * Split the data into a set for modeling `severity`, which excludes zero-pay claims, and for frequency, which includes all claims
 
 The model design will be as follows
@@ -383,13 +351,15 @@ $$
 \text{E[Number of deductible losses]} \text{[Deductible]} + 
 \text{E[Number of capped losses]}\text{[Cap]}
 $$
+
 There will be four final models selected: frequency, severity, and count models for the number of deductible claims and the number of capped claims  For the count models we can use Poisson regression.
 
 We split the data into a training and testing set.
 
 ```{r}
 set.seed(1)
-severity_train_index <- createDataPartition(severity$avg_capped_losss, times = 1, p = 0.7, list = FALSE) %>% as.vector()
+severity_train_index <- createDataPartition(
+  severity$avg_capped_losss, times = 1, p = 0.7, list = FALSE) %>% as.vector()
 
 train_severity <- severity %>% 
   slice(severity_train_index) %>% 
@@ -399,7 +369,8 @@ test_severity <- severity %>%
   slice(- severity_train_index) %>% 
   filter(deductible == "no_deductible", large_loss == "No")
 
-frequency_train_index <- createDataPartition(car$numclaims, times = 1, p = 0.7, list = FALSE) %>% as.vector()
+frequency_train_index <- createDataPartition(
+  car$numclaims, times = 1, p = 0.7, list = FALSE) %>% as.vector()
 
 train_frequency <- car %>% 
   slice(frequency_train_index)
@@ -411,6 +382,8 @@ train_frequency <- car %>%
 
 
 #GLM Models for Severity
+
+##Theory
 
 To explain Generalized Linear Models (GLMs), let's first start with an explanation of a simpler version, Ordinary Least Squares (OLS).
 
@@ -444,6 +417,10 @@ Recall that $e^{log(\text{Something})} = \text{Something}$ which implies
 $$f(y; \lambda) = \exp(-\lambda + y log(\lambda) - log(y!))$$
 
 And this is of the exponential form $e^\text{Something}$, which means that we can model Poisson distributed $Y$'s.  Other distributions in the exponential family are the binomial, normal, gamma, negative binomial, and the Tweedie, which is used specifcally in insurance claims contexts.
+
+##Model Fitting
+
+We test out many combinations of models and evaluate them using the performance on the holdout set.  Traditionally in insurance, the gamma distribution is used as a the response distribution for claim severity.  
 
 
 ```{r}
@@ -563,7 +540,7 @@ get_GLM_RMSE(glm_baseline, test_data = test_severity)
 ```
 
 
-##GBM's for Severity
+##GBMs for Severity
 
 Gradient Bosted Machines (GBMs) are one of the best off-the-shelf models in the world (Elements of Statistical Learning, 302).  There are many variantions of GBM algorithms, but the overall structure is consistent and looks as follows.
 
@@ -587,7 +564,7 @@ The model tuning process involves computing many combinations of these parameter
 
 
 
-```{r fig.width=5, fig.height=5}
+```{r}
 
 fitControl <- trainControl(## 10-fold CV
                            method = "repeatedcv",
@@ -600,16 +577,20 @@ gbmGrid <-  expand.grid(interaction.depth = c(1, 2), #most of the time this is s
                     shrinkage = c(0.002, 0.005, 0.01, 0.05),
                     n.minobsinnode = c(50, 100)) 
 
+# 
+# gbm_severity <- train(
+#   avg_capped_losss ~ veh_value + exposure + veh_age + gender + area + agecat + 
+#     numclaims + veh_body, 
+#   data = train_severity, 
+#   method = "gbm", 
+#   trControl = fitControl,
+#   tuneGrid = gbmGrid,
+#   verbose = FALSE)
 
-gbm_severity <- train(
-  avg_capped_losss ~ veh_value + exposure + veh_age + gender + area + agecat + 
-    numclaims + veh_body, 
-  data = train_severity, 
-  method = "gbm", 
-  trControl = fitControl,
-  tuneGrid = gbmGrid,
-  verbose = FALSE)
-
+#test save and reload
+# saveRDS(gbm_severity, "gbm_severity.rds")
+# rm(gbm_severity)
+gbm_severity <- readRDS("gbm_severity.rds")
 #saveRDS(gbm_severity, file)
 plot(gbm_severity)
 
@@ -700,11 +681,11 @@ summary(frequency_1)
 
 To be continued...
 
-#Sources:
+#References:
 
-CAS GLM Paper: https://www.casact.org/pubs/monographs/papers/05-Goldburd-Khare-Tevet.pdf
+Casualty Actuarial Society GLM Paper: https://www.casact.org/pubs/monographs/papers/05-Goldburd-Khare-Tevet.pdf
 
-CAS Presentation: https://www.casact.org/education/rpm/2012/handouts/Session_4738_presentation_1068_0.pdf
+Casualty Actuarial Society Presentation: https://www.casact.org/education/rpm/2012/handouts/Session_4738_presentation_1068_0.pdf
 
 https://www.casact.org/education/rpm/2012/handouts/Session_4736_presentation_895_0.pdf
 
